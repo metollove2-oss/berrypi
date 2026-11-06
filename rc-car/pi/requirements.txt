@@ -1,0 +1,7 @@
+# picamera2, opencv는 apt로 설치 권장:
+#   sudo apt install -y python3-picamera2 python3-opencv
+# 가상환경은 --system-site-packages 로 만들어 위 패키지를 함께 사용
+numpy
+pyserial
+ai-edge-litert   # TFLite 런타임 (설치 실패 시 tflite-runtime 시도)
+flask            # (선택) 모바일 웹 제어
