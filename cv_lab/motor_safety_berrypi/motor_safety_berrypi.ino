@@ -1,4 +1,4 @@
-// 베리파이 모터 + 충돌 방지 펌웨어 (초안) — L9110S, HC-SR04, 피에조
+// 베리파이 모터 + 충돌 방지 펌웨어 (초안) — L9110S, HC-SR04, 능동 부저(D4)
 //
 // 파이 → 아두이노
 //   M,<좌>,<우>        바퀴 세기 -255 ~ 255 (0.5초 안 오면 정지)
@@ -20,11 +20,12 @@
 const int L_IA = 3,  L_IB = 11;   // 왼쪽 모터  (Timer2)
 const int R_IA = 9,  R_IB = 10;   // 오른쪽 모터 (Timer1)
 const int TRIG = 7,  ECHO = 8;    // HC-SR04
-const int SPK = 5;                // 피에조 (D5 → 피에조 → GND)
+const int SPK = 4;                // 능동 부저 (+ → D4, − → GND)
 const int LED = LED_BUILTIN;      // D13: M 명령 받는 중이면 켜짐
 
 // ---- 모터 조정 값 ----
-const int MIN_PWM = 120;
+const int MIN_PWM = 120;          // 두 바퀴가 같이 겨우 도는 값까지 낮출수록 느린 속도가 잘 됨
+const int MAX_PWM = 190;          // 명령 255일 때의 PWM (motor_lab_v2와 같음). 원래 동작 = 255
 const int LEFT_BOOST = 0, RIGHT_BOOST = 0;
 const int LEFT_DIR = 1, RIGHT_DIR = 1;
 const unsigned long TIMEOUT_MS = 500;
@@ -38,7 +39,7 @@ const unsigned long ECHO_TIMEOUT_US = 12000;  // 약 2 m. 그 이상은 '장애�
 const int FAIL_LIMIT = 10;            // 연속 무응답 → 센서 오류(-1)
 
 // ---- 피에조 종류 ----
-const bool ACTIVE_BUZZER = false;     // 5V만 대도 '삐-' 울리는 능동형이면 true
+const bool ACTIVE_BUZZER = true;      // 능동 부저 (음높이 고정, 켜고 끄는 리듬으로 구분). 피에조 스피커면 false
 
 // ===================== 모터 =====================
 unsigned long lastCmd = 0;
@@ -47,8 +48,10 @@ int cmdL = 0, cmdR = 0;               // 파이가 마지막으로 보낸 값
 
 int toPwm(int mag, int boost) {
   mag = constrain(mag, 0, 255);
-  if (mag == 0) return 0;
-  return constrain((int)map(mag, 1, 255, MIN_PWM, 255) + boost, 0, 255);
+  if (mag == 0) return 0;                                   // 0은 정지 (map에 넣지 않음)
+  int startPwm = constrain(MIN_PWM + boost, 0, 255);        // 명령 1일 때
+  int topPwm   = constrain(MAX_PWM + boost, startPwm, 255); // 명령 255일 때
+  return startPwm + (long)(mag - 1) * (topPwm - startPwm) / 254;
 }
 
 void setMotor(int ia, int ib, int speed, int boost) {
@@ -70,10 +73,11 @@ void drive(int left, int right) {
 
 // ===================== 경고음 (논블로킹) =====================
 struct Note { int freq; int ms; };              // freq 0 = 쉼
-const Note RIFF_CAUTION[] = {{1800, 80}, {2400, 80}, {0, 640}};   // 띠-리 ... (0.8초 반복)
-const Note RIFF_DANGER[]  = {{2600, 70}, {2000, 70}};             // 사이렌 (계속 반복)
-const Note RIFF_EMERG[]   = {{3000, 200}};                        // 높은 음 계속
-const Note RIFF_CLEAR[]   = {{2400, 60}, {1800, 60}, {1200, 100}, {0, 1}};  // 해제 (한 번)
+// 능동 부저는 음높이가 고정이라 '켜짐(freq > 0) / 꺼짐(0)' 리듬으로 구분된다. 피에조면 음높이도 바뀐다.
+const Note RIFF_CAUTION[] = {{1800, 80}, {2400, 80}, {0, 640}};                 // 주의: 삐— ... (0.8초마다)
+const Note RIFF_DANGER[]  = {{2600, 70}, {0, 50}, {2000, 70}, {0, 50}};         // 위험: 삑삑삑삑 (빠르게)
+const Note RIFF_EMERG[]   = {{3000, 200}};                                      // 비상: 계속 삐—
+const Note RIFF_CLEAR[]   = {{2400, 60}, {0, 50}, {1800, 60}, {0, 50}, {1200, 100}, {0, 1}};  // 해제: 삑 삑 삑 (한 번)
 
 const Note *riff = 0;
 int riffLen = 0, noteIdx = 0;
@@ -193,10 +197,10 @@ void updateRiffForZone(Zone before) {
   }
   switch (zone) {
     case EMERG:   playRiff(RIFF_EMERG, 1, true); break;
-    case DANGER:  playRiff(RIFF_DANGER, 2, true); break;
+    case DANGER:  playRiff(RIFF_DANGER, 4, true); break;
     case CAUTION: playRiff(RIFF_CAUTION, 3, true); break;
     case SAFE:
-      if (before >= DANGER) playRiff(RIFF_CLEAR, 4, false);   // 위험에서 벗어나면 해제음
+      if (before >= DANGER) playRiff(RIFF_CLEAR, 6, false);   // 위험에서 벗어나면 해제음
       else if (riff && riff != RIFF_CLEAR) stopRiff();
       break;
   }
